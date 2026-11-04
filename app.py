@@ -1,4 +1,6 @@
 import time
+import base64
+from pathlib import Path
 from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
@@ -175,6 +177,10 @@ with st.sidebar:
 # The external data provider may publish a new price less frequently.
 st_autorefresh(interval=30_000, limit=None, key="quotes_poll")
 
+# Les icônes intégrées au dépôt sont affichables sans fournisseur externe.
+brent_svg = (Path(__file__).parent / "assets" / "brent.svg").read_bytes()
+brent_logo_data = "data:image/svg+xml;base64," + base64.b64encode(brent_svg).decode("ascii")
+
 quotes = all_quotes()
 previous_prices = st.session_state.get("previous_prices", {})
 next_prices = {}
@@ -204,7 +210,8 @@ for asset in ASSETS:
     if asset.get("domain"):
         icon = (f'<img class="asset-icon" src="https://www.google.com/s2/favicons?domain={asset["domain"]}&sz=64" alt="">')
     else:
-        icon = f'<span class="asset-fallback">{asset["icon"]}</span>'
+        icon = (f'<img class="asset-icon" src="{brent_logo_data}" alt="Brent">' 
+                if ident == "brent" else f'<span class="asset-fallback">{asset["icon"]}</span>')
     selected_class = " active" if ident == selected else ""
     st.sidebar.markdown(
         f'<a class="asset-row{selected_class} {direction}" href="?asset={ident}" target="_self">'
@@ -223,13 +230,9 @@ pct_label="—" if pct is None else f"{pct:+.2f}%"
 
 # TradingView symbol: ICEEUR:BRN1! . The CDN icon is attempted first;
 # if unavailable, the oil pictogram is displayed instead of a broken image.
-brent_logo_url = "https://s3-symbol-logo.tradingview.com/commodity/brent-crude-oil--big.svg"
+# Pictogramme original, sans lien vers TradingView.
 logo_html = (
-    '<a href="https://fr.tradingview.com/symbols/ICEEUR-BRN1%21/" '
-    'target="_blank" rel="noopener noreferrer" title="Brent sur TradingView">'
-    f'<img class="market-header-logo" src="{brent_logo_url}" alt="Brent" '
-    'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\';">'
-    '<span class="market-header-fallback" aria-hidden="true">🛢️</span></a>'
+    f'<img class="market-header-logo" src="{brent_logo_data}" alt="Logo Brent">'
     if selected == "brent" else ""
 )
 with st.container(key="market_header"):
