@@ -11,6 +11,24 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Terminal multi-actifs", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
 .block-container{padding-top:0.8rem;padding-bottom:2rem}
+/* Keep the selected asset and its figures visible above the scrolling chart. */
+.st-key-market_header{
+    position:sticky;
+    top:3.4rem;
+    z-index:900;
+    background:var(--background-color,#0e1117);
+    border-bottom:1px solid rgba(128,128,128,.27);
+    padding:.55rem .95rem .7rem;
+    border-radius:0 0 12px 12px;
+    box-shadow:0 5px 16px rgba(0,0,0,.12);
+}
+.st-key-market_header [data-testid="stMarkdownContainer"] p{margin-bottom:0}
+.market-header-title{font-size:1.65rem;font-weight:730;line-height:1.25;margin-bottom:.55rem}
+.market-header-label{font-size:.78rem;opacity:.67}
+.market-header-number{font-size:1.5rem;font-weight:730;font-variant-numeric:tabular-nums}
+.market-header-grid{display:grid;grid-template-columns:minmax(140px,1fr) minmax(140px,1fr);gap:1rem}
+@media(max-width:640px){.st-key-market_header{top:3.1rem;padding:.4rem .5rem}.market-header-title{font-size:1.25rem}.market-header-number{font-size:1.18rem}.market-header-label{font-size:.7rem}}
+
 section[data-testid="stSidebar"]{min-width:315px}
 .asset-row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid rgba(128,128,128,.15);color:inherit!important;text-decoration:none!important}
 .asset-row:hover{background:rgba(128,128,128,.11);border-radius:7px}
@@ -61,7 +79,7 @@ FRAMES = {
     "1 mois": ("1mo", "10y", 72),
 }
 
-@st.cache_data(ttl=75, show_spinner=False)
+@st.cache_data(ttl=25, show_spinner=False)
 def get_data(symbol, interval, period):
     try:
         df = yf.download(symbol, period=period, interval=interval,
@@ -109,7 +127,7 @@ def quote(asset):
     return dict(price=price, pct=pct, stamp=str(df.index[-1]), symbol=sym,
                 error="", fallback=fallback)
 
-@st.cache_data(ttl=75, show_spinner=False)
+@st.cache_data(ttl=25, show_spinner=False)
 def all_quotes():
     return {a["id"]: quote(a) for a in ASSETS}
 
@@ -121,19 +139,11 @@ def format_price(p):
 
 with st.sidebar:
     st.subheader("Marchés")
-    live_enabled = st.toggle("Actualisation automatique", value=True,
-                             help="Interrogation périodique de cotations publiques, pas un flux tick-by-tick.")
-    refresh_seconds = st.select_slider("Fréquence de vérification", options=[30, 60, 90, 120, 300],
-                                       value=90, format_func=lambda s: f"{s} s", disabled=not live_enabled)
-    manual = st.button("↻ Actualiser maintenant", use_container_width=True)
-    st.caption("Source Yahoo Finance · cours potentiellement différés, cache de 75 secondes")
+    st.caption("Actualisation automatique toutes les 30 s · cours publics potentiellement différés")
 
-if manual:
-    get_data.clear()
-    all_quotes.clear()
-
-if live_enabled:
-    st_autorefresh(interval=refresh_seconds * 1000, limit=None, key="quotes_poll")
+# The 25s cache expires between two 30s refreshes, preventing stale repeat results.
+# The external data provider may publish a new price less frequently.
+st_autorefresh(interval=30_000, limit=None, key="quotes_poll")
 
 quotes = all_quotes()
 previous_prices = st.session_state.get("previous_prices", {})
@@ -177,14 +187,20 @@ st.session_state["previous_prices"] = next_prices
 
 asset = next(a for a in ASSETS if a["id"] == selected)
 q = quotes[selected]
-st.title(asset["name"])
-st.caption(f'{q["symbol"]} · {asset["note"]}')
-pcol,ccol,tcol=st.columns([1,1,2])
-pcol.metric("Dernier cours disponible", f'{format_price(q["price"])} {asset["unit"]}')
-ccol.metric("Variation de session (estimée)", "—" if q["pct"] is None else f'{q["pct"]:+.2f}%')
-tcol.caption(f'Dernière donnée : {q["stamp"] or "indisponible"} · Yahoo Finance public ; disponibilité et délai non garantis.')
-if q["fallback"]:
-    st.warning("Le cours de l'or utilise ici le futures GC=F comme remplacement du spot XAUUSD.")
+pct=q["pct"]
+pct_class="flat" if pct is None else ("pos" if pct>0 else "neg" if pct<0 else "flat")
+pct_label="—" if pct is None else f"{pct:+.2f}%"
+with st.container(key="market_header"):
+    st.markdown(
+        f'<div class="market-header-title">{asset["name"]}</div>'
+        f'<div class="market-header-grid">'
+        f'<div><div class="market-header-label">Dernier cours disponible</div>'
+        f'<div class="market-header-number">{format_price(q["price"])} {asset["unit"]}</div></div>'
+        f'<div><div class="market-header-label">Variation de session (estimée)</div>'
+        f'<div class="market-header-number {pct_class}">{pct_label}</div></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 if q["price"] is None:
     st.error(f'Cours indisponible : {q["error"]}')
 
@@ -295,5 +311,3 @@ else:
                             "modeBarButtonsToAdd":["drawline","eraseshape"],"responsive":True})
     st.caption(f'{len(shown)} bougies à l’écran sur {len(df)} disponibles · période visible : {df.index[start_pos]} à {df.index[end_pos]}')
 
-st.info("« Actualisation automatique » = interrogation périodique de Yahoo Finance ; il ne s'agit PAS d'un flux temps réel garanti. Le flash vert/rouge indique un changement entre deux vérifications. Les variations journalières sont estimées à partir des barres disponibles. BRN1! est représenté par BZ=F (instrument différent).")
-st.caption("Aucune connexion à un compte de courtage et aucun ordre envoyé.")
