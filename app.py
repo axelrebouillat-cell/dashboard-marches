@@ -11,7 +11,7 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Terminal multi-actifs", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
 .block-container{padding-top:0.8rem;padding-bottom:2rem}
-/* Fixed quote bar, with explicit contrast independent of Streamlit's theme. */
+/* Discrete fixed quote header: no dark card or rounded background. */
 .st-key-market_header {
     position: fixed !important;
     top: 3.65rem;
@@ -19,38 +19,44 @@ st.markdown("""<style>
     right: 2.5rem;
     width: auto !important;
     z-index: 1000;
-    color: #f9fafb !important;
-    background: #111827 !important;
-    border: 1px solid #334155;
-    padding: .7rem 1.2rem .9rem;
-    border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0,0,0,.3);
+    color: #111827 !important;
+    background: rgba(255,255,255,.97) !important;
+    border: 0 !important;
+    border-bottom: 1px solid rgba(148,163,184,.24) !important;
+    border-radius: 0 !important;
+    padding: .55rem .2rem .8rem;
+    box-shadow: none !important;
+    backdrop-filter: blur(12px);
 }
+.market-header-top {display:flex;align-items:center;gap:.75rem;margin-bottom:.35rem}
+.market-header-logo {width:39px;height:39px;object-fit:contain;flex-shrink:0;border-radius:50%}
+.market-header-fallback {width:39px;height:39px;display:none;align-items:center;justify-content:center;font-size:25px}
 .st-key-market_header .market-header-title {
-    font-size:1.65rem; font-weight:750; line-height:1.25;
-    margin-bottom:.55rem; color:#f9fafb !important;
+    font-size:1.5rem;font-weight:750;line-height:1.25;
+    margin:0;color:#111827 !important;
 }
 .st-key-market_header .market-header-label {
-    font-size:.78rem; color:#cbd5e1 !important;
+    font-size:.75rem;color:#64748b !important;
 }
 .st-key-market_header .market-header-number {
-    font-size:1.5rem; font-weight:730; line-height:1.3;
-    color:#f9fafb !important; font-variant-numeric:tabular-nums;
+    font-size:1.38rem;font-weight:750;line-height:1.35;
+    color:#111827 !important;font-variant-numeric:tabular-nums;
 }
-.st-key-market_header .market-header-number.pos {color:#35df8c !important}
-.st-key-market_header .market-header-number.neg {color:#ff656f !important}
-.st-key-market_header .market-header-number.flat {color:#cbd5e1 !important}
+.st-key-market_header .market-header-number.pos {color:#15803d !important}
+.st-key-market_header .market-header-number.neg {color:#dc2626 !important}
+.st-key-market_header .market-header-number.flat {color:#64748b !important}
 .market-header-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
-.market-header-spacer {height:155px}
+.market-header-spacer {height:145px}
 body:has(section[data-testid="stSidebar"][aria-expanded="false"]) .st-key-market_header {
     left: 2rem;
 }
 @media(max-width:900px) {
-    .st-key-market_header {left:1rem !important;right:1rem;top:3.25rem;padding:.55rem .75rem}
-    .st-key-market_header .market-header-title {font-size:1.3rem}
-    .st-key-market_header .market-header-number {font-size:1.15rem}
+    .st-key-market_header {left:1rem !important;right:1rem;top:3.25rem;padding:.45rem .2rem .6rem}
+    .st-key-market_header .market-header-title {font-size:1.2rem}
+    .st-key-market_header .market-header-number {font-size:1.1rem}
     .st-key-market_header .market-header-label {font-size:.7rem}
-    .market-header-spacer {height:140px}
+    .market-header-logo,.market-header-fallback{width:31px;height:31px}
+    .market-header-spacer {height:130px}
 }
 
 section[data-testid="stSidebar"]{min-width:315px}
@@ -214,9 +220,22 @@ q = quotes[selected]
 pct=q["pct"]
 pct_class="flat" if pct is None else ("pos" if pct>0 else "neg" if pct<0 else "flat")
 pct_label="—" if pct is None else f"{pct:+.2f}%"
+
+# TradingView symbol: ICEEUR:BRN1! . The CDN icon is attempted first;
+# if unavailable, the oil pictogram is displayed instead of a broken image.
+brent_logo_url = "https://s3-symbol-logo.tradingview.com/commodity/brent-crude-oil--big.svg"
+logo_html = (
+    '<a href="https://fr.tradingview.com/symbols/ICEEUR-BRN1%21/" '
+    'target="_blank" rel="noopener noreferrer" title="Brent sur TradingView">'
+    f'<img class="market-header-logo" src="{brent_logo_url}" alt="Brent" '
+    'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'inline-flex\';">'
+    '<span class="market-header-fallback" aria-hidden="true">🛢️</span></a>'
+    if selected == "brent" else ""
+)
 with st.container(key="market_header"):
     st.markdown(
-        f'<div class="market-header-title">{asset["name"]}</div>'
+        f'<div class="market-header-top">{logo_html}'
+        f'<div class="market-header-title">{asset["name"]}</div></div>'
         f'<div class="market-header-grid">'
         f'<div><div class="market-header-label">Dernier cours disponible</div>'
         f'<div class="market-header-number">{format_price(q["price"])} {asset["unit"]}</div></div>'
