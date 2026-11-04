@@ -11,23 +11,47 @@ from streamlit_autorefresh import st_autorefresh
 st.set_page_config(page_title="Terminal multi-actifs", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
 .block-container{padding-top:0.8rem;padding-bottom:2rem}
-/* Keep the selected asset and its figures visible above the scrolling chart. */
-.st-key-market_header{
-    position:sticky;
-    top:3.4rem;
-    z-index:900;
-    background:var(--background-color,#0e1117);
-    border-bottom:1px solid rgba(128,128,128,.27);
-    padding:.55rem .95rem .7rem;
-    border-radius:0 0 12px 12px;
-    box-shadow:0 5px 16px rgba(0,0,0,.12);
+/* Fixed quote bar, with explicit contrast independent of Streamlit's theme. */
+.st-key-market_header {
+    position: fixed !important;
+    top: 3.65rem;
+    left: calc(21rem + 2.5rem);
+    right: 2.5rem;
+    width: auto !important;
+    z-index: 1000;
+    color: #f9fafb !important;
+    background: #111827 !important;
+    border: 1px solid #334155;
+    padding: .7rem 1.2rem .9rem;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3);
 }
-.st-key-market_header [data-testid="stMarkdownContainer"] p{margin-bottom:0}
-.market-header-title{font-size:1.65rem;font-weight:730;line-height:1.25;margin-bottom:.55rem}
-.market-header-label{font-size:.78rem;opacity:.67}
-.market-header-number{font-size:1.5rem;font-weight:730;font-variant-numeric:tabular-nums}
-.market-header-grid{display:grid;grid-template-columns:minmax(140px,1fr) minmax(140px,1fr);gap:1rem}
-@media(max-width:640px){.st-key-market_header{top:3.1rem;padding:.4rem .5rem}.market-header-title{font-size:1.25rem}.market-header-number{font-size:1.18rem}.market-header-label{font-size:.7rem}}
+.st-key-market_header .market-header-title {
+    font-size:1.65rem; font-weight:750; line-height:1.25;
+    margin-bottom:.55rem; color:#f9fafb !important;
+}
+.st-key-market_header .market-header-label {
+    font-size:.78rem; color:#cbd5e1 !important;
+}
+.st-key-market_header .market-header-number {
+    font-size:1.5rem; font-weight:730; line-height:1.3;
+    color:#f9fafb !important; font-variant-numeric:tabular-nums;
+}
+.st-key-market_header .market-header-number.pos {color:#35df8c !important}
+.st-key-market_header .market-header-number.neg {color:#ff656f !important}
+.st-key-market_header .market-header-number.flat {color:#cbd5e1 !important}
+.market-header-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+.market-header-spacer {height:155px}
+body:has(section[data-testid="stSidebar"][aria-expanded="false"]) .st-key-market_header {
+    left: 2rem;
+}
+@media(max-width:900px) {
+    .st-key-market_header {left:1rem !important;right:1rem;top:3.25rem;padding:.55rem .75rem}
+    .st-key-market_header .market-header-title {font-size:1.3rem}
+    .st-key-market_header .market-header-number {font-size:1.15rem}
+    .st-key-market_header .market-header-label {font-size:.7rem}
+    .market-header-spacer {height:140px}
+}
 
 section[data-testid="stSidebar"]{min-width:315px}
 .asset-row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid rgba(128,128,128,.15);color:inherit!important;text-decoration:none!important}
@@ -201,6 +225,8 @@ with st.container(key="market_header"):
         f'</div>',
         unsafe_allow_html=True,
     )
+# Reserve vertical space so that the fixed quote bar does not cover timeframe controls.
+st.markdown('<div class="market-header-spacer" aria-hidden="true"></div>', unsafe_allow_html=True)
 if q["price"] is None:
     st.error(f'Cours indisponible : {q["error"]}')
 
