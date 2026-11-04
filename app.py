@@ -1,22 +1,35 @@
+import time
+from datetime import datetime, timezone
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import yfinance as yf
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Terminal multi-actifs", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
-.block-container{padding-top:1rem}.stSidebar [data-testid="stSidebarContent"]{padding-top:1rem}
-.asset-row{display:flex;align-items:center;gap:10px;padding:9px 7px;border-bottom:1px solid rgba(128,128,128,.16);text-decoration:none!important;color:inherit!important}
-.asset-row:hover{background:rgba(128,128,128,.12);border-radius:8px}
-.asset-row.active{background:rgba(76,134,255,.14);border-radius:8px}
-.asset-icon{height:28px;width:28px;object-fit:contain;border-radius:50%;background:white;padding:3px}
-.asset-fallback{width:28px;text-align:center;font-size:20px}.asset-title{font-weight:600;font-size:13px}
-.asset-price{font-size:12px;opacity:.85}.asset-change{font-size:12px;font-weight:700;white-space:nowrap}
-.asset-right{margin-left:auto;text-align:right}.pos{color:#16a34a}.neg{color:#dc2626}.flat{color:#9ca3af}
+.block-container{padding-top:0.8rem;padding-bottom:2rem}
+section[data-testid="stSidebar"]{min-width:315px}
+.asset-row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-bottom:1px solid rgba(128,128,128,.15);color:inherit!important;text-decoration:none!important}
+.asset-row:hover{background:rgba(128,128,128,.11);border-radius:7px}
+.asset-row.active{background:rgba(46,125,245,.15);border-radius:7px}
+.asset-icon{height:27px;width:27px;object-fit:contain;border-radius:50%;background:white;padding:3px}
+.asset-fallback{width:27px;text-align:center;font-size:19px}
+.asset-title{font-weight:650;font-size:13px}
+.asset-symbol{opacity:.65;font-size:11px}
+.asset-price{font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.asset-change{font-size:12px;font-weight:750;font-variant-numeric:tabular-nums}
+.asset-right{margin-left:auto;text-align:right}
+.pos{color:#21b56f}.neg{color:#ee5757}.flat{color:#999}
+@keyframes priceUp{0%{background:rgba(25,175,90,.45)}100%{background:transparent}}
+@keyframes priceDown{0%{background:rgba(220,50,50,.45)}100%{background:transparent}}
+.flash-up{animation:priceUp 2.4s ease-out;border-radius:6px}
+.flash-down{animation:priceDown 2.4s ease-out;border-radius:6px}
 </style>""",unsafe_allow_html=True)
 
-# Les instruments similaires sont signalés : aucune cotation n'est inventée.
+# Les prix sont publics et potentiellement différés. Aucun flux de marché sous licence n'est inclus.
 ASSETS=[
  dict(id='xau',name='XAUUSD',symbol='XAUUSD=X',alt='GC=F',icon='🥇',unit='USD/oz',note='Or spot XAU/USD si disponible ; sinon futures or GC=F (proxy, non identique).'),
  dict(id='btc',name='BTCUSD',symbol='BTC-USD',icon='₿',unit='USD',note='Bitcoin/USD, marché 24 h/24.'),
@@ -36,92 +49,251 @@ ASSETS=[
  dict(id='schneider',name='Schneider Electric',symbol='SU.PA',domain='se.com',unit='EUR',note='Action Euronext Paris.'),
  dict(id='lvmh',name='LVMH',symbol='MC.PA',domain='lvmh.com',unit='EUR',note='Action Euronext Paris.'),
 ]
-FRAMES={'1 min':('1m','5d'),'5 min':('5m','1mo'),'15 min':('15m','1mo'),'30 min':('30m','1mo'),'1 h':('60m','3mo'),'4 h':('60m','2y'),'1 jour':('1d','2y'),'1 semaine':('1wk','5y'),'1 mois':('1mo','10y')}
+FRAMES = {
+    "1 min": ("1m", "5d", 100),
+    "5 min": ("5m", "1mo", 110),
+    "15 min": ("15m", "1mo", 110),
+    "30 min": ("30m", "1mo", 100),
+    "1 h": ("60m", "3mo", 120),
+    "4 h": ("60m", "60d", 100),
+    "1 jour": ("1d", "2y", 120),
+    "1 semaine": ("1wk", "5y", 100),
+    "1 mois": ("1mo", "10y", 72),
+}
 
-@st.cache_data(ttl=120,show_spinner=False)
-def get_data(symbol,interval='1d',period='5d'):
+@st.cache_data(ttl=75, show_spinner=False)
+def get_data(symbol, interval, period):
     try:
-        df=yf.download(symbol,period=period,interval=interval,progress=False,auto_adjust=False,threads=False)
-        if df is None or df.empty: return pd.DataFrame(), 'Aucune cotation disponible'
-        if isinstance(df.columns,pd.MultiIndex): df.columns=df.columns.get_level_values(0)
-        df=df.rename(columns=str.title)
-        if any(c not in df for c in ('Open','High','Low','Close')): return pd.DataFrame(),'OHLC incomplet'
-        return df.dropna(subset=['Close']).sort_index(),''
-    except Exception as e:
-        return pd.DataFrame(),str(e)[:180]
+        df = yf.download(symbol, period=period, interval=interval,
+                         auto_adjust=False, progress=False, threads=False)
+        if df is None or df.empty:
+            return pd.DataFrame(), "Pas de données fournies"
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.rename(columns=str.title).sort_index()
+        if any(k not in df.columns for k in ("Open", "High", "Low", "Close")):
+            return pd.DataFrame(), "Données OHLC incomplètes"
+        return df.dropna(subset=["Open", "High", "Low", "Close"]), ""
+    except Exception as ex:
+        return pd.DataFrame(), str(ex)[:160]
+
+def last_session_pct(df):
+    if df.empty:
+        return None
+    # Retour de la dernière session par rapport à la dernière clôture précédente.
+    local_dates = pd.Index(df.index.date)
+    current_day = local_dates[-1]
+    previous = df.loc[local_dates < current_day, "Close"]
+    if previous.empty:
+        return None
+    base = float(previous.iloc[-1])
+    return (float(df["Close"].iloc[-1]) / base - 1) * 100 if base else None
 
 def quote(asset):
-    df,err=get_data(asset['symbol'],'1d','7d')
-    sym=asset['symbol']; fallback=False
-    if df.empty and asset.get('alt'):
-        sym=asset['alt'];df,err=get_data(sym,'1d','7d');fallback=True
-    if df.empty: return dict(price=None,change=None,error=err,symbol=sym,fallback=fallback,stamp=None)
-    last=float(df['Close'].iloc[-1]);prev=float(df['Close'].iloc[-2]) if len(df)>1 else None
-    change=(last/prev-1)*100 if prev and prev>0 else None
-    return dict(price=last,change=change,error='',symbol=sym,fallback=fallback,stamp=str(df.index[-1]))
+    sym = asset["symbol"]
+    df, err = get_data(sym, "5m", "5d")
+    fallback = False
+    if df.empty and asset.get("alt"):
+        sym = asset["alt"]
+        df, err = get_data(sym, "5m", "5d")
+        fallback = not df.empty
+    if df.empty:
+        df, err = get_data(sym, "1d", "7d")
+    if df.empty:
+        return dict(price=None, pct=None, stamp=None, symbol=sym, error=err, fallback=fallback)
+    price = float(df["Close"].iloc[-1])
+    pct = last_session_pct(df)
+    if pct is None and len(df) > 1:
+        prev = float(df["Close"].iloc[-2])
+        pct = (price / prev - 1) * 100 if prev else None
+    return dict(price=price, pct=pct, stamp=str(df.index[-1]), symbol=sym,
+                error="", fallback=fallback)
 
-@st.cache_data(ttl=120,show_spinner=False)
-def quotes_all(): return {a['id']:quote(a) for a in ASSETS}
+@st.cache_data(ttl=75, show_spinner=False)
+def all_quotes():
+    return {a["id"]: quote(a) for a in ASSETS}
 
-if st.sidebar.button('↻ Actualiser les cotations',use_container_width=True):
-    get_data.clear();quotes_all.clear();st.rerun()
-st.sidebar.caption('Yahoo Finance public · cache 2 min · cours potentiellement différés')
-quotes=quotes_all()
-valid_ids=[a['id'] for a in ASSETS]
-try: selected=st.query_params.get('asset','brent')
-except Exception: selected='brent'
-if selected not in valid_ids: selected='brent'
+def format_price(p):
+    if p is None:
+        return "—"
+    dp = 4 if p < 2 else 2
+    return f"{p:,.{dp}f}".replace(",", " ")
 
-for a in ASSETS:
-    q=quotes[a['id']]
-    price='Indisponible' if q['price'] is None else f"{q['price']:,.2f}".replace(',',' ')
-    ch=q['change']; cls='flat' if ch is None else ('pos' if ch>0 else 'neg' if ch<0 else 'flat')
-    pct='—' if ch is None else f"{ch:+.2f}%"
-    icon=(f'<img class="asset-icon" src="https://www.google.com/s2/favicons?domain={a["domain"]}&sz=64" alt="">' if a.get('domain') else f'<span class="asset-fallback">{a["icon"]}</span>')
-    active=' active' if selected==a['id'] else ''
-    st.sidebar.markdown(f'<a class="asset-row{active}" href="?asset={a["id"]}" target="_self">{icon}<span><span class="asset-title">{a["name"]}</span><br><span class="asset-price">{a["symbol"]}</span></span><span class="asset-right"><span class="asset-price">{price}</span><br><span class="asset-change {cls}">{pct}</span></span></a>',unsafe_allow_html=True)
+with st.sidebar:
+    st.subheader("Marchés")
+    live_enabled = st.toggle("Actualisation automatique", value=True,
+                             help="Interrogation périodique de cotations publiques, pas un flux tick-by-tick.")
+    refresh_seconds = st.select_slider("Fréquence de vérification", options=[30, 60, 90, 120, 300],
+                                       value=90, format_func=lambda s: f"{s} s", disabled=not live_enabled)
+    manual = st.button("↻ Actualiser maintenant", use_container_width=True)
+    st.caption("Source Yahoo Finance · cours potentiellement différés, cache de 75 secondes")
 
-asset=next(a for a in ASSETS if a['id']==selected);q=quotes[selected]
-st.title(asset['name'])
-st.caption(f"Ticker : {q['symbol']} · {asset['note']}")
-if q['fallback']:st.warning('Le futures or GC=F remplace ici le prix spot XAUUSD ; instruments différents.')
-if q['price'] is None:
-    st.error(f"Prix indisponible pour {asset['name']}. {q['error']}")
-else:
-    a,b,c=st.columns([1,1,2])
-    a.metric('Dernier cours disponible',f"{q['price']:,.2f} {asset['unit']}",f"{q['change']:+.2f}%" if q['change'] is not None else None)
-    b.metric('Variation entre les deux dernières clôtures',f"{q['change']:+.2f}%" if q['change'] is not None else '—')
-    c.caption(f"Dernière barre journalière : {q['stamp']}. La variation compare les deux dernières clôtures disponibles, pas nécessairement le dernier prix en séance.")
+if manual:
+    get_data.clear()
+    all_quotes.clear()
 
-frame=st.selectbox('Unité de temps',list(FRAMES),index=6)
-interval,period=FRAMES[frame]
-df,err=get_data(q['symbol'],interval,period)
+if live_enabled:
+    st_autorefresh(interval=refresh_seconds * 1000, limit=None, key="quotes_poll")
+
+quotes = all_quotes()
+previous_prices = st.session_state.get("previous_prices", {})
+next_prices = {}
+valid_ids = [a["id"] for a in ASSETS]
+try:
+    selected = st.query_params.get("asset", "brent")
+except Exception:
+    selected = "brent"
+if selected not in valid_ids:
+    selected = "brent"
+
+for asset in ASSETS:
+    ident = asset["id"]
+    q = quotes[ident]
+    price = q["price"]
+    next_prices[ident] = price
+    old_price = previous_prices.get(ident)
+    direction = ""
+    if price is not None and old_price is not None:
+        if price > old_price:
+            direction = "flash-up"
+        elif price < old_price:
+            direction = "flash-down"
+    pct = q["pct"]
+    change_class = "flat" if pct is None else ("pos" if pct > 0 else "neg" if pct < 0 else "flat")
+    pct_label = "—" if pct is None else f"{pct:+.2f}%"
+    if asset.get("domain"):
+        icon = (f'<img class="asset-icon" src="https://www.google.com/s2/favicons?domain={asset["domain"]}&sz=64" alt="">')
+    else:
+        icon = f'<span class="asset-fallback">{asset["icon"]}</span>'
+    selected_class = " active" if ident == selected else ""
+    st.sidebar.markdown(
+        f'<a class="asset-row{selected_class} {direction}" href="?asset={ident}" target="_self">'
+        f'{icon}<span><span class="asset-title">{asset["name"]}</span><br>'
+        f'<span class="asset-symbol">{q["symbol"]}</span></span>'
+        f'<span class="asset-right"><span class="asset-price">{format_price(price)}</span><br>'
+        f'<span class="asset-change {change_class}">{pct_label}</span></span></a>',
+        unsafe_allow_html=True)
+st.session_state["previous_prices"] = next_prices
+
+asset = next(a for a in ASSETS if a["id"] == selected)
+q = quotes[selected]
+st.title(asset["name"])
+st.caption(f'{q["symbol"]} · {asset["note"]}')
+pcol,ccol,tcol=st.columns([1,1,2])
+pcol.metric("Dernier cours disponible", f'{format_price(q["price"])} {asset["unit"]}')
+ccol.metric("Variation de session (estimée)", "—" if q["pct"] is None else f'{q["pct"]:+.2f}%')
+tcol.caption(f'Dernière donnée : {q["stamp"] or "indisponible"} · Yahoo Finance public ; disponibilité et délai non garantis.')
+if q["fallback"]:
+    st.warning("Le cours de l'or utilise ici le futures GC=F comme remplacement du spot XAUUSD.")
+if q["price"] is None:
+    st.error(f'Cours indisponible : {q["error"]}')
+
+st.divider()
+frame = st.segmented_control("Unité de temps", options=list(FRAMES),
+                             default="1 jour", key=f'frame_{selected}')
+if not frame:
+    frame = "1 jour"
+interval, period, default_candles = FRAMES[frame]
+df, error = get_data(q["symbol"], interval, period)
+
 if df.empty:
-    st.warning(f"Historique indisponible pour cette unité de temps : {err}")
+    st.warning(f"Impossible de charger les bougies {frame} : {error}")
 else:
-    if frame=='4 h':
-        # Construit les 4h à partir des bougies 1h, jamais depuis les données quotidiennes.
-        agg={'Open':'first','High':'max','Low':'min','Close':'last'}
-        if 'Volume' in df: agg['Volume']='sum'
-        df=df.resample('4h').agg(agg).dropna(subset=['Close'])
-    df=df.copy()
-    for n in (20,50,200): df[f'MM{n}']=df['Close'].rolling(n).mean()
-    fig=go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index,open=df.Open,high=df.High,low=df.Low,close=df.Close,name=asset['name']))
-    for n in (20,50,200):fig.add_trace(go.Scatter(x=df.index,y=df[f'MM{n}'],name=f'MM{n}',mode='lines'))
-    fig.update_layout(height=590,xaxis_rangeslider_visible=False,margin=dict(l=10,r=10,t=30,b=10),legend=dict(orientation='h'))
-    st.plotly_chart(fig,use_container_width=True)
-    if 'Volume' in df and df['Volume'].notna().any() and df['Volume'].sum()>0:
-        vf=go.Figure(go.Bar(x=df.index,y=df.Volume,name='Volume'))
-        vf.update_layout(height=190,margin=dict(l=10,r=10,t=10,b=10));st.plotly_chart(vf,use_container_width=True)
-    delta=df.Close.diff()
-    up=delta.clip(lower=0).ewm(alpha=1/14,adjust=False,min_periods=14).mean()
-    down=(-delta.clip(upper=0)).ewm(alpha=1/14,adjust=False,min_periods=14).mean()
-    rsi=100-100/(1+up/down.replace(0,np.nan))
-    rf=go.Figure(go.Scatter(x=df.index,y=rsi,name='RSI 14'))
-    rf.add_hline(y=70,line_dash='dash');rf.add_hline(y=30,line_dash='dash')
-    rf.update_layout(height=190,yaxis_range=[0,100],margin=dict(l=10,r=10,t=10,b=10))
-    st.plotly_chart(rf,use_container_width=True)
+    if frame == "4 h":
+        # 4h constituées de 4 barres 1h ; pas d'upsampling artificiel.
+        agg = {"Open":"first", "High":"max", "Low":"min", "Close":"last"}
+        if "Volume" in df.columns:
+            agg["Volume"] = "sum"
+        df = df.resample("4h").agg(agg).dropna(subset=["Open","High","Low","Close"])
+    df = df.copy()
+    for n in (20, 50, 200):
+        df[f"SMA{n}"] = df.Close.rolling(n).mean()
+    delta = df.Close.diff()
+    gain = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+    rs = gain / loss.replace(0, np.nan)
+    df["RSI"] = 100 - 100 / (1 + rs)
+    has_volume = "Volume" in df and df.Volume.notna().any() and df.Volume.sum()>0
 
-st.info('Yahoo Finance n’est pas un flux officiel garanti en temps réel. Les données peuvent être différées, incomplètes ou indisponibles. BRN1! est représenté par BZ=F, un instrument approchant.')
-st.caption('Aucun ordre de bourse n’est envoyé.')
+    with st.expander("Réglages du graphique et des axes", expanded=True):
+        x1,x2,x3=st.columns([1.3,1.3,1])
+        max_bars=len(df)
+        visible_bars=x1.slider("Nombre de bougies visibles (axe X)", min_value=min(15,max_bars),
+                               max_value=max_bars, value=min(default_candles,max_bars),
+                               key=f'bars_{selected}_{frame}')
+        end_pos=x2.slider("Déplacement dans l'historique", min_value=min(visible_bars-1,max_bars-1),
+                          max_value=max_bars-1,value=max_bars-1,
+                          key=f'end_{selected}_{frame}')
+        height=x3.slider("Hauteur du graphique",400,900,650,step=50,key=f'height_{selected}')
+        auto_y=st.checkbox("Axe des prix automatique (zone visible)",value=True,
+                           key=f'autoy_{selected}_{frame}')
+        manual_min=manual_max=None
+        if not auto_y:
+            y1,y2=st.columns(2)
+            manual_min=y1.number_input("Prix minimum (axe Y)",value=float(df.Low.min()),
+                                       format="%.4f",key=f'ymin_{selected}_{frame}')
+            manual_max=y2.number_input("Prix maximum (axe Y)",value=float(df.High.max()),
+                                       format="%.4f",key=f'ymax_{selected}_{frame}')
+            if manual_max<=manual_min:
+                st.warning("Le maximum doit être supérieur au minimum.")
+                manual_min=manual_max=None
+        show_sma=st.multiselect("Moyennes mobiles",options=[20,50,200],default=[20,50,200],
+                                key=f'mas_{selected}_{frame}')
+        st.caption("Molette : zoom · glisser : déplacer · double-clic : réinitialiser · bouton caméra : sauvegarder l'image")
+
+    start_pos=max(0,end_pos-visible_bars+1)
+    shown=df.iloc[start_pos:end_pos+1]
+    labels=[v.strftime("%d/%m %H:%M") if frame in ("1 min","5 min","15 min","30 min","1 h","4 h")
+            else v.strftime("%d/%m/%Y") for v in df.index]
+    # Catégories ordinales : les week-ends et nuits non cotées ne dilatent pas le graphique.
+    inds=list(range(len(df)))
+    candle_colors=dict(increasing_line_color="#19b979",decreasing_line_color="#ec5860",
+                       increasing_fillcolor="#19b979",decreasing_fillcolor="#ec5860")
+    row_heights=[0.70,0.15,0.15] if has_volume else [0.79,0.21]
+    rows=len(row_heights)
+    fig=make_subplots(rows=rows,cols=1,shared_xaxes=True,vertical_spacing=.035,row_heights=row_heights)
+    fig.add_trace(go.Candlestick(x=inds,open=df.Open,high=df.High,low=df.Low,close=df.Close,
+                                 name="Bougies",**candle_colors),row=1,col=1)
+    colors={20:"#e3a34d",50:"#599be8",200:"#b490dd"}
+    for n in show_sma:
+        fig.add_trace(go.Scatter(x=inds,y=df[f"SMA{n}"],name=f"SMA {n}",
+                                 line=dict(width=1.4,color=colors[n])),row=1,col=1)
+    vol_row=2 if has_volume else None
+    rsi_row=3 if has_volume else 2
+    if has_volume:
+        vol_colors=np.where(df.Close>=df.Open,"#19b979","#ec5860")
+        fig.add_trace(go.Bar(x=inds,y=df.Volume,name="Volume",marker_color=vol_colors,
+                             showlegend=False),row=vol_row,col=1)
+    fig.add_trace(go.Scatter(x=inds,y=df.RSI,name="RSI 14",line=dict(color="#a889f7",width=1.5)),
+                  row=rsi_row,col=1)
+    fig.add_hline(y=70,line_dash="dot",line_color="#b78888",row=rsi_row,col=1)
+    fig.add_hline(y=30,line_dash="dot",line_color="#7eac93",row=rsi_row,col=1)
+    fig.update_yaxes(range=[0,100],row=rsi_row,col=1)
+    if manual_min is not None:
+        yrange=[manual_min,manual_max]
+    else:
+        low=float(shown.Low.min());high=float(shown.High.max())
+        pad=max((high-low)*.06,abs(high)*.0005,.001)
+        yrange=[low-pad,high+pad]
+    fig.update_yaxes(range=yrange,side="right",row=1,col=1)
+    tickstep=max(1,visible_bars//9)
+    tickvals=list(range(start_pos,end_pos+1,tickstep))
+    if end_pos not in tickvals:tickvals.append(end_pos)
+    for row in range(1,rows+1):
+        fig.update_xaxes(range=[start_pos-.8,end_pos+1.0],tickmode="array",
+                         tickvals=tickvals,ticktext=[labels[i] for i in tickvals],
+                         showgrid=True,gridcolor="rgba(130,130,130,.12)",row=row,col=1)
+        fig.update_yaxes(showgrid=True,gridcolor="rgba(130,130,130,.12)",row=row,col=1)
+    fig.update_layout(height=height,xaxis_rangeslider_visible=False,
+                      margin=dict(l=12,r=55,t=30,b=18),
+                      legend=dict(orientation="h",x=0,y=1.05),
+                      hovermode="x unified",dragmode="pan",
+                      uirevision=f'{selected}:{frame}:{start_pos}:{end_pos}:{auto_y}:{manual_min}:{manual_max}',
+                      showlegend=True)
+    st.plotly_chart(fig,use_container_width=True,
+                    config={"scrollZoom":True,"displaylogo":False,
+                            "modeBarButtonsToAdd":["drawline","eraseshape"],"responsive":True})
+    st.caption(f'{len(shown)} bougies à l’écran sur {len(df)} disponibles · période visible : {df.index[start_pos]} à {df.index[end_pos]}')
+
+st.info("« Actualisation automatique » = interrogation périodique de Yahoo Finance ; il ne s'agit PAS d'un flux temps réel garanti. Le flash vert/rouge indique un changement entre deux vérifications. Les variations journalières sont estimées à partir des barres disponibles. BRN1! est représenté par BZ=F (instrument différent).")
+st.caption("Aucune connexion à un compte de courtage et aucun ordre envoyé.")
